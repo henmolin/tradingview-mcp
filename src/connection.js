@@ -90,8 +90,28 @@ export async function connect() {
 async function findChartTarget() {
   const resp = await fetch(`http://${CDP_HOST}:${CDP_PORT}/json/list`);
   const targets = await resp.json();
-  // Prefer targets with tradingview.com/chart in the URL
-  return targets.find(t => t.type === 'page' && /tradingview\.com\/chart/i.test(t.url))
+  const chartTargets = targets.filter(t => t.type === 'page' && /tradingview\.com\/chart/i.test(t.url));
+
+  // If the caller pinned a specific chart by its URL slug (the "AbCd1234"
+  // in tradingview.com/chart/AbCd1234/), pick exactly that target.
+  // Without this, multi-tab TV setups silently bind to whichever chart
+  // happened to come first in CDP /json/list.
+  const pinId = process.env.TRADINGVIEW_TARGET_CHART_ID;
+  if (pinId) {
+    const re = new RegExp(`/chart/${pinId.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}/`, 'i');
+    const pinned = chartTargets.find(t => re.test(t.url));
+    if (pinned) return pinned;
+    // Pinned target requested but not found: fall through with a warning so
+    // the caller's connect() retry logic still has a chance to find SOMETHING
+    // (better than instant fail when TV is mid-restart).
+    console.error(
+      `[tradingview-mcp] TRADINGVIEW_TARGET_CHART_ID="${pinId}" requested ` +
+      `but no matching target. Falling back to first available chart target. ` +
+      `Available: ${chartTargets.map(t => t.url).join(', ')}`
+    );
+  }
+
+  return chartTargets[0]
     || targets.find(t => t.type === 'page' && /tradingview/i.test(t.url))
     || null;
 }
